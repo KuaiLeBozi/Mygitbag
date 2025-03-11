@@ -26,7 +26,6 @@ void merge(float* data, size_t left, size_t mid, size_t right) {
         R[j] = data[mid + 1 + j];
 
     size_t i = 0, j = 0, k = left;
-    #pragma omp parallel for simd
     while (i < n1 && j < n2) {
         if (L[i] <= R[j]) {
             data[k] = L[i];
@@ -37,13 +36,11 @@ void merge(float* data, size_t left, size_t mid, size_t right) {
         }
         ++k;
     }
-    #pragma omp parallel for simd
     while (i < n1) {
         data[k] = L[i];
         ++i;
         ++k;
     }
-    #pragma omp parallel for simd
     while (j < n2) {
         data[k] = R[j];
         ++j;
