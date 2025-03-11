@@ -6,6 +6,7 @@
 #include <vector>
 #include <algorithm>
 #include <utility>
+#include <stack>
 
 void optimized_pre_phase1(size_t) {}
 
@@ -20,8 +21,12 @@ void bitonic_merge(float* data, int low, int cnt, bool dir) {
         int k = cnt / 2;
         #pragma omp parallel for simd
         for (int i = low; i < low + k; i++) {
-            if (dir == (data[i] > data[i + k])) {
-                std::swap(data[i], data[i + k]);
+            float val_i = data[i];
+            float val_ik = data[i + k];
+            if (dir == (val_i > val_ik)) {
+                // 手动交换变量
+                data[i] = val_ik;
+                data[i + k] = val_i;
             }
         }
         bitonic_merge(data, low, k, dir);
@@ -36,11 +41,17 @@ void bitonic_sort(float* data, int n) {
             for (int i = 0; i < n; i++) {
                 int ixj = i ^ j;
                 if (ixj > i) {
-                    if ((i & k) == 0 && data[i] > data[ixj]) {
-                        std::swap(data[i], data[ixj]);
+                    float val_i = data[i];
+                    float val_ixj = data[ixj];
+                    if ((i & k) == 0 && val_i > val_ixj) {
+                        // 手动交换变量
+                        data[i] = val_ixj;
+                        data[ixj] = val_i;
                     }
-                    if ((i & k) != 0 && data[i] < data[ixj]) {
-                        std::swap(data[i], data[ixj]);
+                    if ((i & k) != 0 && val_i < val_ixj) {
+                        // 手动交换变量
+                        data[i] = val_ixj;
+                        data[ixj] = val_i;
                     }
                 }
             }
@@ -52,30 +63,36 @@ void optimized_do_phase1(float* data, size_t size) {
     size_t n = 1;
     while (n < size) n <<= 1;
 
-    float* padded_data = new float[n];
+    float* extended_data = new float[n];
+    #pragma omp parallel for 
     for (size_t i = 0; i < size; ++i) {
-        padded_data[i] = data[i];
+        extended_data[i] = data[i];
     }
+    #pragma omp parallel for 
     for (size_t i = size; i < n; ++i) {
-        padded_data[i] = std::numeric_limits<float>::max();
+        extended_data[i] = std::numeric_limits<float>::max();
     }
 
-    bitonic_sort(padded_data, n);
+    bitonic_sort(extended_data, n);
 
+    #pragma omp parallel for 
     for (size_t i = 0; i < size; ++i) {
-        data[i] = padded_data[i];
+        float temp = extended_data[i];
+        data[i] = temp;
     }
 
-    delete[] padded_data;
+    delete[] extended_data;
 }
 
 void optimized_do_phase2(size_t* result, float* data, float* query, size_t size) {
-    #pragma omp parallel for schedule(static) shared(data, query, result) 
+    #pragma omp parallel for schedule(static) shared(result, data, query) 
     for (size_t i = 0; i < size; ++i) {
         size_t l = 0, r = size;
+        float query_val = query[i];
         while (l < r) {
             size_t m = l + (r - l) / 2;
-            if (data[m] < query[i]) {
+            float data_val = data[m];
+            if (data_val < query_val) {
                 l = m + 1;
             } else {
                 r = m;
