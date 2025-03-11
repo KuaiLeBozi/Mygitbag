@@ -1,4 +1,4 @@
-CXXFLAGS=-Og -fopenmp -fsanitize=address -Wall -Wextra -Wshadow  -pipe
+CXXFLAGS=-Og -fopenmp  -mavx512f -O3 -fsanitize=address -Wall -Wextra -Wshadow  -pipe
 
 all: main
 
