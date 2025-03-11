@@ -1,12 +1,7 @@
 #include <cstdio>
 #include <cstddef>
 #include <cstdlib>
-#include <omp.h>
-#include <limits>
-#include <vector>
 #include <algorithm>
-#include <utility>
-#include <stack>
 
 void optimized_pre_phase1(size_t) {}
 
@@ -16,84 +11,85 @@ void optimized_pre_phase2(size_t) {}
 
 void optimized_post_phase2() {}
 
-inline void bitonic_merge_kernel(float* data, int low, int k, bool dir) {
+void merge(float* data, size_t left, size_t mid, size_t right) {
+    size_t n1 = mid - left + 1;
+    size_t n2 = right - mid;
+
+    float* L = (float*)malloc(n1 * sizeof(float));
+    float* R = (float*)malloc(n2 * sizeof(float));
+
     #pragma omp parallel for simd
-    for (int i = low; i < low + k; i++) {
-        float val_i = data[i];
-        float val_ik = data[i + k];
-        if (dir == (val_i > val_ik)) {
-            // 手动交换变量
-            data[i] = val_ik;
-            data[i + k] = val_i;
+    for (size_t i = 0; i < n1; ++i)
+        L[i] = data[left + i];
+    #pragma omp parallel for simd
+    for (size_t j = 0; j < n2; ++j)
+        R[j] = data[mid + 1 + j];
+
+    size_t i = 0, j = 0, k = left;
+    #pragma omp parallel for simd
+    while (i < n1 && j < n2) {
+        if (L[i] <= R[j]) {
+            data[k] = L[i];
+            ++i;
+        } else {
+            data[k] = R[j];
+            ++j;
         }
+        ++k;
     }
+    #pragma omp parallel for simd
+    while (i < n1) {
+        data[k] = L[i];
+        ++i;
+        ++k;
+    }
+    #pragma omp parallel for simd
+    while (j < n2) {
+        data[k] = R[j];
+        ++j;
+        ++k;
+    }
+
+    free(L);
+    free(R);
 }
 
-void bitonic_merge(float* data, int low, int cnt, bool dir) {
-    for (int k = cnt / 2; k > 0; k /= 2) {
-        bitonic_merge_kernel(data, low, k, dir);
+void mergeSort(float* data, size_t left, size_t right) {
+    if (right - left <= 1000) {
+        std::sort(data + left, data + right + 1);
+        return;
     }
-}
 
-void bitonic_sort(float* data, int n) {
-    for (int k = 2; k <= n; k = 2 * k) {
-        for (int j = k / 2; j > 0; j = j / 2) {
-            #pragma omp parallel for simd
-            for (int i = 0; i < n; i++) {
-                int ixj = i ^ j;
-                if (ixj > i) {
-                    float val_i = data[i];
-                    float val_ixj = data[ixj];
-                    if ((i & k) == 0 && val_i > val_ixj) {
-                        // 手动交换变量
-                        data[i] = val_ixj;
-                        data[ixj] = val_i;
-                    }
-                    if ((i & k) != 0 && val_i < val_ixj) {
-                        // 手动交换变量
-                        data[i] = val_ixj;
-                        data[ixj] = val_i;
-                    }
-                }
-            }
+    if (left < right) {
+        size_t mid = left + (right - left) / 2;
+        #pragma omp taskgroup
+        {
+            #pragma omp task shared(data)
+            mergeSort(data, left, mid);
+            #pragma omp task shared(data)
+            mergeSort(data, mid + 1, right);
+            #pragma omp taskyield
         }
+
+        merge(data, left, mid, right);
     }
 }
 
 void optimized_do_phase1(float* data, size_t size) {
-    size_t n = 1;
-    while (n < size) n <<= 1;
-
-    float* extended_data = new float[n];
-    #pragma omp parallel for 
-    for (size_t i = 0; i < size; ++i) {
-        extended_data[i] = data[i];
+    #pragma omp parallel
+    {
+        #pragma omp single
+        mergeSort(data, 0, size - 1);
     }
-    #pragma omp parallel for 
-    for (size_t i = size; i < n; ++i) {
-        extended_data[i] = std::numeric_limits<float>::max();
-    }
-
-    bitonic_sort(extended_data, n);
-
-    #pragma omp parallel for 
-    for (size_t i = 0; i < size; ++i) {
-        float temp = extended_data[i];
-        data[i] = temp;
-    }
-
-    delete[] extended_data;
 }
 
 void optimized_do_phase2(size_t* result, float* data, float* query, size_t size) {
-    #pragma omp parallel for schedule(static) shared(result, data, query) 
+    #pragma omp parallel for schedule(static) shared(data, query, result)
     for (size_t i = 0; i < size; ++i) {
         size_t l = 0, r = size;
-        float query_val = query[i];
         while (l < r) {
             size_t m = l + (r - l) / 2;
-            float data_val = data[m];
-            if (data_val < query_val) {
+            if (data[m] < query[i]) {
                 l = m + 1;
             } else {
                 r = m;
