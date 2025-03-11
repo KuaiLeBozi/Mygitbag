@@ -16,21 +16,22 @@ void optimized_pre_phase2(size_t) {}
 
 void optimized_post_phase2() {}
 
-void bitonic_merge(float* data, int low, int cnt, bool dir) {
-    if (cnt > 1) {
-        int k = cnt / 2;
-        #pragma omp parallel for simd
-        for (int i = low; i < low + k; i++) {
-            float val_i = data[i];
-            float val_ik = data[i + k];
-            if (dir == (val_i > val_ik)) {
-                // 手动交换变量
-                data[i] = val_ik;
-                data[i + k] = val_i;
-            }
+inline void bitonic_merge_kernel(float* data, int low, int k, bool dir) {
+    #pragma omp parallel for simd
+    for (int i = low; i < low + k; i++) {
+        float val_i = data[i];
+        float val_ik = data[i + k];
+        if (dir == (val_i > val_ik)) {
+            // 手动交换变量
+            data[i] = val_ik;
+            data[i + k] = val_i;
         }
-        bitonic_merge(data, low, k, dir);
-        bitonic_merge(data, low + k, k, dir);
+    }
+}
+
+void bitonic_merge(float* data, int low, int cnt, bool dir) {
+    for (int k = cnt / 2; k > 0; k /= 2) {
+        bitonic_merge_kernel(data, low, k, dir);
     }
 }
 
