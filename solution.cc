@@ -2,7 +2,9 @@
 #include <cstddef>
 #include <cstdlib>
 #include <algorithm>
+#include <cstring>
 #include <immintrin.h>
+#include <functional>
 
 void optimized_pre_phase1(size_t) {}
 
@@ -12,73 +14,58 @@ void optimized_pre_phase2(size_t) {}
 
 void optimized_post_phase2() {}
 
-void merge(float* data, size_t left, size_t mid, size_t right) {
-    size_t n1 = mid - left + 1;
-    size_t n2 = right - mid;
-
-    float* L = (float*)malloc(n1 * sizeof(float));
-    float* R = (float*)malloc(n2 * sizeof(float));
-
-    #pragma omp parallel for simd
-    for (size_t i = 0; i < n1; ++i)
-        L[i] = data[left + i];
-    #pragma omp parallel for simd
-    for (size_t j = 0; j < n2; ++j)
-        R[j] = data[mid + 1 + j];
-
-    size_t i = 0, j = 0, k = left;
-    while (i < n1 && j < n2) {
-        if (L[i] <= R[j]) {
-            data[k] = L[i];
-            ++i;
-        } else {
-            data[k] = R[j];
-            ++j;
-        }
-        ++k;
-    }
-    while (i < n1) {
-        data[k] = L[i];
-        ++i;
-        ++k;
-    }
-    while (j < n2) {
-        data[k] = R[j];
-        ++j;
-        ++k;
-    }
-
-    free(L);
-    free(R);
-}
-
-void mergeSort(float* data, size_t left, size_t right) {
-    if (right - left <= 1000) {
-        std::sort(data + left, data + right + 1);
-        return;
-    }
-
-    if (left < right) {
-        size_t mid = left + (right - left) / 2;
-        #pragma omp taskgroup
-        {
-            #pragma omp task shared(data)
-            mergeSort(data, left, mid);
-            #pragma omp task shared(data)
-            mergeSort(data, mid + 1, right);
-            #pragma omp taskyield
-        }
-
-        merge(data, left, mid, right);
-    }
-}
-
 void optimized_do_phase1(float* data, size_t size) {
+    float* buffer = (float*)aligned_alloc(32, size * sizeof(float));
+    
     #pragma omp parallel
     {
         #pragma omp single
-        mergeSort(data, 0, size - 1);
+        {
+            std::function<void(float*, size_t, size_t)> mergeSortInternal = 
+            [&buffer, &mergeSortInternal](float* arr, size_t left, size_t right) {
+                if (right - left <= 1000) {
+                    std::sort(arr + left, arr + right + 1);
+                    return;
+                }
+
+                size_t mid = left + (right - left) / 2;
+                #pragma omp taskgroup
+                {
+                    #pragma omp task untied shared(arr)
+                    mergeSortInternal(arr, left, mid);
+                    #pragma omp task untied shared(arr)
+                    mergeSortInternal(arr, mid + 1, right);
+                    #pragma omp taskyield
+                }
+
+                // 内联merge逻辑
+                size_t n1 = mid - left + 1;
+                size_t n2 = right - mid;
+                
+                memcpy(buffer + left, arr + left, n1 * sizeof(float));
+                memcpy(buffer + mid + 1, arr + mid + 1, n2 * sizeof(float));
+
+                size_t i = left, j = mid + 1, k = left;
+                const size_t i_end = mid + 1;
+                const size_t j_end = right + 1;
+                
+                while (i < i_end && j < j_end) {
+                    arr[k++] = (buffer[i] <= buffer[j]) ? buffer[i++] : buffer[j++];
+                }
+                
+                if (i < i_end) {
+                    memcpy(arr + k, buffer + i, (i_end - i) * sizeof(float));
+                }
+                if (j < j_end) {
+                    memcpy(arr + k, buffer + j, (j_end - j) * sizeof(float));
+                }
+            };
+            
+            mergeSortInternal(data, 0, size - 1);
+        }
     }
+    
+    free(buffer);
 }
 
 void optimized_do_phase2(size_t* result, float* data, float* query, size_t size) {
